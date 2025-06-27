@@ -112,4 +112,3 @@ serve(async () => {
 
   console.log("✅ [daily-horoscope] all signs processed");
   return new Response("Daily horoscopes updated");
-
