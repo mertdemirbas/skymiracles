@@ -108,8 +108,8 @@ serve(async () => {
         console.error("❌ upsert error for", sign, error);
       } else {
         console.log("✔ upsert success for", sign, data);
-      }
+    }
 
   console.log("✅ [daily-horoscope] all signs processed");
   return new Response("Daily horoscopes updated");
-});
+
