@@ -1,1 +1,1 @@
-// TODO: setup client
+// TODO: setup supabase client
