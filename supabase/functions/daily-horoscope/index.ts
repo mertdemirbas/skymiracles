@@ -16,21 +16,28 @@ const supabase = createClient(
 );
 
 const signs = [
-  "aries","taurus","gemini","cancer","leo","virgo",
-  "libra","scorpio","sagittarius","capricorn","aquarius","pisces"
+  "aries", "taurus", "gemini", "cancer", "leo", "virgo",
+  "libra", "scorpio", "sagittarius", "capricorn", "aquarius", "pisces"
 ];
 
 async function fetchFromHoroscopeApp(sign: string) {
-  const res = await fetch(`https://horoscope-app-api.vercel.app/api/v1/get-horoscope/daily?sign=${sign}&day=today`);
+  const res = await fetch(
+    `https://horoscope-app-api.vercel.app/api/v1/get-horoscope/daily?sign=${sign}&day=today`
+  );
   if (!res.ok) return null;
   const json = await res.json();
   return json.data?.horoscope_data ?? null;
 }
+
 async function fetchFromAztro(sign: string) {
-  const res = await fetch(`https://aztro.sameerkumar.website/?sign=${sign}&day=today`, { method: "POST" });
+  const res = await fetch(
+    `https://aztro.sameerkumar.website/?sign=${sign}&day=today`,
+    { method: "POST" }
+  );
   if (!res.ok) return null;
   return (await res.json()).description;
 }
+
 async function fetchFromBurcYorum(sign: string) {
   const res = await fetch(`https://burc-yorumlari.vercel.app/get/${sign}`);
   if (!res.ok) return null;
@@ -43,16 +50,16 @@ async function translateWithGPT(text: string) {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${Deno.env.get(EnvKeys.OPENAI_KEY)}`,
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
     },
     body: JSON.stringify({
       model: "gpt-3.5-turbo",
       messages: [
         { role: "system", content: "You are a professional translator. Translate to natural Turkish." },
-        { role: "user", content: text }
+        { role: "user", content: text },
       ],
-      temperature: 0.7
-    })
+      temperature: 0.7,
+    }),
   });
   if (!res.ok) return text;
   const data = await res.json();
@@ -60,19 +67,40 @@ async function translateWithGPT(text: string) {
 }
 
 serve(async () => {
-  const today = new Date().toISOString().slice(0,10);
+  console.log("🔥 [daily-horoscope] invocation started at", new Date().toISOString());
+  const today = new Date().toISOString().slice(0, 10);
+
   for (const sign of signs) {
-    let txt = await fetchFromHoroscopeApp(sign)
-      || await fetchFromAztro(sign)
-      || await fetchFromBurcYorum(sign)
-      || "";
-    if (!txt) continue;
+    console.log("➡️ fetching for sign:", sign);
+
+    let txt =
+      (await fetchFromHoroscopeApp(sign)) ||
+      (await fetchFromAztro(sign)) ||
+      (await fetchFromBurcYorum(sign)) ||
+      "";
+
+    if (!txt) {
+      console.log("⚠️ no text returned for", sign);
+      continue;
+    }
+
+    // Eğer metin Türkçe karakter içermiyorsa, çeviri uygula
     if (!/[ĞÜŞİÖÇığüşiöç]/.test(txt)) {
+      console.log("🔄 translating via GPT for", sign);
       txt = await translateWithGPT(txt);
     }
+
+    console.log("💾 upserting into horoscopes:", {
+      sign,
+      date: today,
+      preview: txt.slice(0, 20) + (txt.length > 20 ? "…" : ""),
+    });
+
     await supabase
       .from("horoscopes")
-      .upsert({ sign, date: today, text: txt }, { onConflict: ["sign","date"] });
+      .upsert({ sign, date: today, text: txt }, { onConflict: ["sign", "date"] });
   }
+
+  console.log("✅ [daily-horoscope] all signs processed");
   return new Response("Daily horoscopes updated");
 });
