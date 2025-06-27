@@ -96,10 +96,19 @@ serve(async () => {
       preview: txt.slice(0, 20) + (txt.length > 20 ? "…" : ""),
     });
 
-    await supabase
-      .from("horoscopes")
-      .upsert({ sign, date: today, text: txt }, { onConflict: ["sign", "date"] });
-  }
+    //await supabase
+     // .from("horoscopes")
+      //.upsert({ sign, date: today, text: txt }, { onConflict: ["sign", "date"] });
+  //}
+
+    const { data, error } = await supabase
+        .from("horoscopes")
+        .upsert({ sign, date: today, text: txt }, { onConflict: ["sign","date"] });
+      if (error) {
+        console.error("❌ upsert error for", sign, error);
+      } else {
+        console.log("✔ upsert success for", sign, data);
+      }
 
   console.log("✅ [daily-horoscope] all signs processed");
   return new Response("Daily horoscopes updated");
