@@ -1,29 +1,23 @@
 /// <reference lib="deno.ns" />
 /// <reference lib="dom" />
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SIGNS = [
-  "aries", "taurus", "gemini", "cancer",
-  "leo", "virgo", "libra", "scorpio",
-  "sagittarius", "capricorn", "aquarius", "pisces",
-] as const;
-type Sign = typeof SIGNS[number];
-
-enum EnvKeys {
-  SUPABASE_URL              = "SUPABASE_URL",
-  SUPABASE_SERVICE_ROLE_KEY = "SUPABASE_SERVICE_ROLE_KEY",
-  OPENAI_API_KEY            = "OPENAI_API_KEY",
-}
-
-const SUPABASE_URL   = Deno.env.get(EnvKeys.SUPABASE_URL)!;
-const SUPABASE_KEY   = Deno.env.get(EnvKeys.SUPABASE_SERVICE_ROLE_KEY)!;
-const OPENAI_API_KEY = Deno.env.get(EnvKeys.OPENAI_API_KEY)!;
+// Çevre değişkenleri (trimliyoruz ki baş/son boşluk, newline falan kalmasın)
+const SUPABASE_URL = (Deno.env.get("SUPABASE_URL") ?? "").trim();
+const SUPABASE_KEY = (Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "").trim();
+const OPENAI_KEY   = (Deno.env.get("OPENAI_API_KEY") ?? "").trim();
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// 1) Üçüncü parti API’lerden günlük yorumu çekme
-async function fetchFromHoroscopeApp(sign: Sign): Promise<string | null> {
+const signs = [
+  "aries","taurus","gemini","cancer",
+  "leo","virgo","libra","scorpio",
+  "sagittarius","capricorn","aquarius","pisces"
+];
+
+async function fetchFromHoroscopeApp(sign: string): Promise<string|null> {
   const res = await fetch(
     `https://horoscope-app-api.vercel.app/api/v1/get-horoscope/daily?sign=${sign}&day=today`
   );
@@ -32,87 +26,80 @@ async function fetchFromHoroscopeApp(sign: Sign): Promise<string | null> {
   return json.data?.horoscope_data ?? null;
 }
 
-async function fetchFromAztro(sign: Sign): Promise<string | null> {
-  const res = await fetch(`https://aztro.sameerkumar.website/?sign=${sign}&day=today`, {
-    method: "POST",
-  });
+async function fetchFromAztro(sign: string): Promise<string|null> {
+  const res = await fetch(
+    `https://aztro.sameerkumar.website/?sign=${sign}&day=today`,
+    { method: "POST" }
+  );
   if (!res.ok) return null;
   const json = await res.json();
-  return json.description ?? null;
+  return json.description;
 }
 
-async function fetchFromBurcYorum(sign: Sign): Promise<string | null> {
+async function fetchFromBurcYorum(sign: string): Promise<string|null> {
   const res = await fetch(`https://burc-yorumlari.vercel.app/get/${sign}`);
   if (!res.ok) return null;
   const arr = await res.json();
-  return Array.isArray(arr) && arr[0]?.GunlukYorum
-    ? arr[0].GunlukYorum
-    : null;
+  return Array.isArray(arr) && arr[0]?.GunlukYorum || null;
 }
 
-// 2) GPT ile doğal Türkçe çeviri
-async function translateToTurkish(text: string): Promise<string> {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${OPENAI_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "system",
-          content: "You are a professional translator. Translate the following horoscope into natural Turkish, preserving tone:"
-        },
-        {
-          role: "user",
-          content: text
-        }
-      ],
-      temperature: 0.7,
-    }),
-  });
-  if (!res.ok) {
-    console.error("GPT çeviri hatası:", await res.text());
+async function translateWithGPT(text: string): Promise<string> {
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OPENAI_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-3.5-turbo",
+        messages: [
+          { role: "system", content: "You are a professional translator. Translate to natural Turkish." },
+          { role: "user",   content: text }
+        ],
+        temperature: 0.7
+      })
+    });
+    if (!res.ok) {
+      console.error("❌ GPT API hata kodu:", res.status, await res.text());
+      return text;
+    }
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content?.trim() ?? text;
+  } catch (err) {
+    console.error("❌ translateWithGPT error:", err);
     return text;
   }
-  const data = await res.json();
-  return data.choices[0].message.content.trim();
 }
 
-// 3) Edge Function
 serve(async () => {
-  console.log("🔥 [daily-horoscope] invocation at", new Date().toISOString());
-
+  console.log("🔥 [daily-horoscope] invocation started at", new Date().toISOString());
   const today = new Date().toISOString().slice(0, 10);
-  for (const sign of SIGNS) {
-    console.log("➡️ fetching for:", sign);
-    let txt =
+
+  for (const sign of signs) {
+    console.log("➡️ fetching for sign:", sign);
+
+    let txt = 
       await fetchFromHoroscopeApp(sign) ||
       await fetchFromAztro(sign) ||
       await fetchFromBurcYorum(sign) ||
       "";
 
     if (!txt) {
-      console.warn("⚠️ no data for", sign);
+      console.log("⚠️ no text returned for", sign);
       continue;
     }
 
-    // Eğer metin zaten Türkçe karakter içermiyorsa, GPT ile çevir
-    if (!/[İŞĞÇÜÖışğçüö]/.test(txt)) {
+    // İçerikte Türkçe karakter yoksa GPT ile çevir
+    if (!/[ĞÜŞİÖÇığüşiöç]/.test(txt)) {
       console.log("🔄 translating via GPT for", sign);
-      try {
-        txt = await translateToTurkish(txt);
-      } catch (err) {
-        console.error("❌ translation failed:", err);
-      }
+      txt = await translateWithGPT(txt);
     }
 
-    console.log("💾 upserting:", { sign, date: today, preview: txt.slice(0, 30) + "…" });
+    console.log("💾 upserting into horoscopes:", { sign, date: today, preview: txt.slice(0,20)+"…" });
     const { data, error } = await supabase
       .from("horoscopes")
-      .upsert({ sign, date: today, text: txt }, { onConflict: ["sign", "date"] });
+      .upsert({ sign, date: today, text: txt }, { onConflict: ["sign","date"] });
 
     if (error) {
       console.error("❌ upsert error for", sign, error);
@@ -121,6 +108,6 @@ serve(async () => {
     }
   }
 
-  console.log("✅ all signs done");
+  console.log("✅ [daily-horoscope] all signs processed");
   return new Response("Daily horoscopes updated");
 });
