@@ -1,0 +1,1 @@
+<!-- TODO: Add horoscope card component -->
