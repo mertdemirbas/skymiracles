@@ -1,15 +1,15 @@
-import { defineConfig } from 'tailwindcss'
+import type { Config } from 'tailwindcss'
 
-export default defineConfig({
+const config: Config = {
   content: [
-    './components/**/*.{vue,ts}',
-    './layouts/**/*.vue',
-    './pages/**/*.vue',
-    './plugins/**/*.{js,ts}',
-    './nuxt.config.{js,ts}'
+    './components/**/*.{vue,js,ts}',
+    './layouts/**/*.{vue,js,ts}',
+    './pages/**/*.{vue,js,ts}',
+    './composables/**/*.{vue,js,ts}',
+    './app.vue'
   ],
-  theme: {
-    extend: {},
-  },
+  theme: { extend: {} },
   plugins: [],
-})
+}
+
+export default config
