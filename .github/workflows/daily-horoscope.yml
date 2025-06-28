@@ -1,0 +1,20 @@
+name: Daily Horoscope Trigger
+
+on:
+  schedule:
+    - cron: '0 7 * * *'  # Run at 07:00 UTC every day
+  # Allow manual triggers for testing
+  workflow_dispatch:
+
+jobs:
+  trigger-daily-horoscope:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Trigger Supabase Edge Function
+        run: |
+          curl -X POST 'https://akvtcftjiuanvotvhbfp.supabase.co/functions/v1/daily-horoscope' \
+          -H 'Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}' \
+          -H 'apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}' \
+          -H 'Content-Type: application/json' \
+          -d '{}'
