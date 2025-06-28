@@ -144,14 +144,30 @@ serve(async () => {
     }
 
     console.log("✅ [daily-horoscope] all signs processed");
-    return new Response("Daily horoscopes updated", {
-      headers: { "Content-Type": "application/json" }
-    });
+    return new Response(
+      JSON.stringify({ 
+        success: true, 
+        message: "Daily horoscopes updated",
+        timestamp: new Date().toISOString()
+      }),
+      { 
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      }
+    );
   } catch (error) {
     console.error("💥 Fatal error:", error);
     return new Response(
-      JSON.stringify({ error: "Internal server error", details: error.message }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
+      JSON.stringify({ 
+        success: false, 
+        error: "Internal server error", 
+        details: error.message,
+        timestamp: new Date().toISOString()
+      }),
+      { 
+        status: 500, 
+        headers: { "Content-Type": "application/json" } 
+      }
     );
   }
 });
