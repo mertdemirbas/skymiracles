@@ -29,10 +29,11 @@ async function fetchFromHoroscopeApp(sign: string): Promise<string|null> {
 }
 
 async function fetchFromAztro(sign: string): Promise<string|null> {
-  const res = await fetch(`https://aztro.sameerkumar.website/?sign=${sign}&day=today`, { method: "POST" });
+  const res = await fetch(`https://aztro.sameerkumar.website/?sign=${sign}&day=today`, {
+    method: "POST"
+  });
   if (!res.ok) return null;
-  const j = await res.json();
-  return j.description;
+  return (await res.json()).description;
 }
 
 async function fetchFromBurcYorum(sign: string): Promise<string|null> {
@@ -43,7 +44,6 @@ async function fetchFromBurcYorum(sign: string): Promise<string|null> {
 }
 
 async function translateWithGPT(text: string): Promise<string> {
-  // Header değerlerini kesin stringe çevirdik, byte-string hatası kalkacak
   const headers = new Headers();
   headers.set("Authorization", `Bearer ${OPENAI_KEY}`);
   headers.set("Content-Type", "application/json");
@@ -71,39 +71,48 @@ async function translateWithGPT(text: string): Promise<string> {
 }
 
 serve(async () => {
-  console.log("🔥 [daily-horoscope] invocation started at", new Date().toISOString());
+  console.log("🔥 [daily-horoscope] started at", new Date().toISOString());
   const today = new Date().toISOString().slice(0,10);
 
+  // 1) Tablodaki eski günlere ait tüm yorumları sil
+  const { error: delErr } = await supabase
+    .from("horoscopes")
+    .delete()
+    .not("date", "eq", today);
+  if (delErr) console.error("❌ cleanup error:", delErr);
+
+  // 2) Her burç için fetch → translate → insert
   for (const sign of signs) {
     console.log("➡️ fetching for sign:", sign);
+
     let txt = await fetchFromHoroscopeApp(sign)
            || await fetchFromAztro(sign)
            || await fetchFromBurcYorum(sign)
            || "";
     if (!txt) {
-      console.warn("⚠️ no text returned for", sign);
+      console.warn("⚠️ no text for", sign);
       continue;
     }
 
-    // Sadece Türkçe karakter yoksa çevir
+    // Türkçe karakter yoksa GPT ile çevir
     if (!/[ĞÜŞİÖÇığüşiöç]/.test(txt)) {
       console.log("🔄 translating via GPT for", sign);
       txt = await translateWithGPT(txt);
     }
 
-    console.log("💾 upserting into horoscopes:", { sign, date: today, preview: txt.slice(0,20)+"…" });
+    console.log("💾 inserting", sign, txt.slice(0,20)+"…");
 
     const { data, error } = await supabase
       .from("horoscopes")
-      .upsert({ sign, date: today, text: txt, text_tr: txt }, { onConflict: ["sign","date"] });
+      .insert({ sign, date: today, text: txt, text_tr: txt });
 
     if (error) {
-      console.error("❌ upsert error for", sign, error);
+      console.error("❌ insert error for", sign, error);
     } else {
-      console.log("✔ upsert success for", sign);
+      console.log("✔ insert success for", sign);
     }
   }
 
-  console.log("✅ [daily-horoscope] all signs processed");
-  return new Response("Daily horoscopes updated");
+  console.log("✅ all done");
+  return new Response("Done");
 });
