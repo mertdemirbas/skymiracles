@@ -4,36 +4,38 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// Çevre değişkenleri (trimliyoruz ki baş/son boşluk, newline falan kalmasın)
-const SUPABASE_URL = (Deno.env.get("SUPABASE_URL") ?? "").trim();
-const SUPABASE_KEY = (Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "").trim();
-const OPENAI_KEY   = (Deno.env.get("OPENAI_API_KEY") ?? "").trim();
+// .env’deki anahtar isimleri
+enum EnvKeys {
+  SUPABASE_URL       = "SUPABASE_URL",
+  SUPABASE_KEY       = "SUPABASE_SERVICE_ROLE_KEY",
+  OPENAI_KEY         = "OPENAI_API_KEY",
+}
+
+const SUPABASE_URL = Deno.env.get(EnvKeys.SUPABASE_URL)!;
+const SUPABASE_KEY = Deno.env.get(EnvKeys.SUPABASE_KEY)!;
+const OPENAI_KEY   = Deno.env.get(EnvKeys.OPENAI_KEY)!;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// Desteklenen 12 burç listesi
 const signs = [
-  "aries","taurus","gemini","cancer",
-  "leo","virgo","libra","scorpio",
-  "sagittarius","capricorn","aquarius","pisces"
+  "aries","taurus","gemini","cancer","leo","virgo",
+  "libra","scorpio","sagittarius","capricorn","aquarius","pisces"
 ];
 
+// Üç farklı kaynak API’sinden yorum çekme fonksiyonları
 async function fetchFromHoroscopeApp(sign: string): Promise<string|null> {
-  const res = await fetch(
-    `https://horoscope-app-api.vercel.app/api/v1/get-horoscope/daily?sign=${sign}&day=today`
-  );
+  const res = await fetch(`https://horoscope-app-api.vercel.app/api/v1/get-horoscope/daily?sign=${sign}&day=today`);
   if (!res.ok) return null;
   const json = await res.json();
   return json.data?.horoscope_data ?? null;
 }
 
 async function fetchFromAztro(sign: string): Promise<string|null> {
-  const res = await fetch(
-    `https://aztro.sameerkumar.website/?sign=${sign}&day=today`,
-    { method: "POST" }
-  );
+  const res = await fetch(`https://aztro.sameerkumar.website/?sign=${sign}&day=today`, { method: "POST" });
   if (!res.ok) return null;
-  const json = await res.json();
-  return json.description;
+  const { description } = await res.json();
+  return description;
 }
 
 async function fetchFromBurcYorum(sign: string): Promise<string|null> {
@@ -43,13 +45,14 @@ async function fetchFromBurcYorum(sign: string): Promise<string|null> {
   return Array.isArray(arr) && arr[0]?.GunlukYorum || null;
 }
 
+// OpenAI ile çeviri fonksiyonu
 async function translateWithGPT(text: string): Promise<string> {
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${OPENAI_KEY}`,
-        "Content-Type": "application/json",
+        "Content-Type":  "application/json"
       },
       body: JSON.stringify({
         model: "gpt-3.5-turbo",
@@ -60,52 +63,76 @@ async function translateWithGPT(text: string): Promise<string> {
         temperature: 0.7
       })
     });
-    if (!res.ok) {
-      console.error("❌ GPT API hata kodu:", res.status, await res.text());
-      return text;
-    }
+    if (!res.ok) return text;
     const data = await res.json();
-    return data.choices?.[0]?.message?.content?.trim() ?? text;
-  } catch (err) {
-    console.error("❌ translateWithGPT error:", err);
+    return data.choices[0].message.content.trim();
+  } catch (_err) {
+    console.error("❌ translation error", _err);
     return text;
   }
 }
 
+// Edge Function'u ayağa kaldır
 serve(async () => {
   console.log("🔥 [daily-horoscope] invocation started at", new Date().toISOString());
+
   const today = new Date().toISOString().slice(0, 10);
 
   for (const sign of signs) {
     console.log("➡️ fetching for sign:", sign);
 
-    let txt = 
-      await fetchFromHoroscopeApp(sign) ||
-      await fetchFromAztro(sign) ||
-      await fetchFromBurcYorum(sign) ||
-      "";
-
+    // 1) Orijinal yorumu çek
+    let txt = await fetchFromHoroscopeApp(sign)
+           || await fetchFromAztro(sign)
+           || await fetchFromBurcYorum(sign)
+           || "";
     if (!txt) {
-      console.log("⚠️ no text returned for", sign);
+      console.warn("⚠️ no text returned for", sign);
       continue;
     }
 
-    // İçerikte Türkçe karakter yoksa GPT ile çevir
-    if (!/[ĞÜŞİÖÇığüşiöç]/.test(txt)) {
-      console.log("🔄 translating via GPT for", sign);
-      txt = await translateWithGPT(txt);
-    }
-
-    console.log("💾 upserting into horoscopes:", { sign, date: today, preview: txt.slice(0,20)+"…" });
-    const { data, error } = await supabase
+    // 2) Önceden çevrilmiş var mı diye DB’den oku
+    const { data: existing, error: selErr } = await supabase
       .from("horoscopes")
-      .upsert({ sign, date: today, text: txt }, { onConflict: ["sign","date"] });
+      .select("translated_text")
+      .eq("sign", sign)
+      .eq("date", today)
+      .single();
 
-    if (error) {
-      console.error("❌ upsert error for", sign, error);
-    } else {
-      console.log("✔ upsert success for", sign);
+    let finalText: string;
+
+    if (selErr) {
+      console.error("❌ select error for", sign, selErr);
+      finalText = txt;  // fallback
     }
+    else if (existing?.translated_text) {
+      console.log("🟢 reuse existing translation for", sign);
+      finalText = existing.translated_text;
+    }
+    else {
+      // 3) İhtiyaç varsa çeviri yap
+      if (!/[ĞÜŞİÖÇığüşiöç]/.test(txt)) {
+        console.log("🔄 translating via GPT for", sign);
+        txt = await translateWithGPT(txt);
+      }
+      finalText = txt;
+    }
+
+    // 4) Upsert: original text + translated_text
+    console.log("💾 upserting into horoscopes:", { sign, date: today });
+    const { error: upErr } = await supabase
+      .from("horoscopes")
+      .upsert({
+        sign,
+        date: today,
+        text: txt,              // orijinal
+        translated_text: finalText  // yeni sütun
+      }, {
+        onConflict: ["sign","date"]
+      });
+
+    if (upErr) console.error("❌ upsert error for", sign, upErr);
+    else       console.log("✔ upsert success for", sign);
   }
 
   console.log("✅ [daily-horoscope] all signs processed");
